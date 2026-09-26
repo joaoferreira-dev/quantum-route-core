@@ -8,7 +8,7 @@ Atualizado em 25/09/2026. Referência: [SPEC v9](../specs/quantum-route-core-spe
 - Host header validado por allowlist; modo local aceita apenas hosts de loopback. Falhas de armazenamento e quotas têm limites globais e por integrador para jobs, taxa, snapshots, disco livre e chamadas ORS.
 - Jobs terminais expirados retornam 404 por GET e cancelamento. Distâncias cartesianas fora da faixa geram erro de entrada em vez de HTTP 500.
 - `uv` fixado em 0.11.15 para incluir correções dos avisos de escrita e remoção de arquivos arbitrários.
-- CI roda somente em push para branches de trabalho; deploy roda somente em push para `main` (incluindo merges), após validar o PR e o SHA contra o topo da branch.
+- CI roda somente em push para branches de trabalho; deploy roda somente em push para `main` (incluindo merges), após validar o PR e o SHA contra o topo da branch e repetir a suíte completa de qualidade em três plataformas antes de publicar.
 - Alterações locais de segurança ainda precisam ser validadas pelo CI hospedado e pelo procedimento de deploy antes de produção.
 
 **Situação: base do piloto clássico implementada e verificada localmente. Aceitação viária real e operacional pendentes. O escopo integral da SPEC, incluindo a frente quântica, não está completo.**

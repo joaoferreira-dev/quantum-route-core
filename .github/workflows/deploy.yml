@@ -31,8 +31,37 @@ jobs:
             const merged=associated.find(pr=>pr.merged_at && pr.base.ref===base && pr.merge_commit_sha===context.sha);
             if(!merged) throw Error('Default-branch commit is not a merged pull request');
             core.setOutput('sha',context.sha); core.setOutput('run_id',String(context.runId)); core.setOutput('pr',String(merged.number));
-  build:
+  quality:
     needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - run: python -m pip install uv==0.11.15
+      - run: uv sync --frozen --extra service --extra classical --extra cli
+      - run: uv run --no-sync ruff check src tests migrations scripts
+      - run: uv run --no-sync ruff format --check src tests migrations scripts
+      - run: uv run --no-sync mypy src
+      - run: uv run --no-sync pytest --junitxml=results/junit.xml --cov=quantum_route_core --cov-report=xml:results/coverage.xml
+      - run: uv build
+      - name: Verify minimal wheel installation
+        shell: bash
+        run: |
+          uv venv .core-test
+          if [ "$RUNNER_OS" = "Windows" ]; then PY=.core-test/Scripts/python.exe; else PY=.core-test/bin/python; fi
+          uv pip install --python "$PY" dist/*.whl
+          "$PY" -c "from quantum_route_core.public import solve; import importlib.util; assert importlib.util.find_spec('fastapi') is None; assert importlib.util.find_spec('ortools') is None"
+          "$PY" examples/python/solve_instance.py
+  build:
+    needs: [verify, quality]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -69,7 +98,7 @@ jobs:
         if: always()
         run: docker compose -f deploy/compose.yaml down
   publish:
-    needs: [verify, build]
+    needs: [verify, quality, build]
     runs-on: ubuntu-latest
     environment: production
     permissions:
