@@ -1,0 +1,7 @@
+{
+  "description": "Small fixed smoke benchmark; not a performance claim",
+  "runs": [
+    {"instance": "../instances/matrix.json", "config": {"backend": "exact"}},
+    {"instance": "../instances/matrix.json", "config": {"backend": "classical", "time_limit_seconds": 2}}
+  ]
+}

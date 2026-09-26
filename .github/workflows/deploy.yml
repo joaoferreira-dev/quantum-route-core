@@ -1,0 +1,179 @@
+name: Deploy production
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+concurrency:
+  group: production
+  cancel-in-progress: false
+jobs:
+  verify:
+    if: vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.verify.outputs.sha }}
+      run_id: ${{ steps.verify.outputs.run_id }}
+    steps:
+      - uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        id: verify
+        with:
+          script: |
+            const {owner,repo}=context.repo;
+            const repository=(await github.rest.repos.get({owner,repo})).data;
+            const base=repository.default_branch;
+            if(base!=='main' || context.ref!=='refs/heads/main') throw Error('Untrusted deployment origin');
+            const head=(await github.rest.repos.getBranch({owner,repo,branch:base})).data.commit.sha;
+            if(context.sha!==head) throw Error('Obsolete deployment; default branch advanced');
+            const associated=(await github.rest.repos.listPullRequestsAssociatedWithCommit({owner,repo,commit_sha:context.sha})).data;
+            const merged=associated.find(pr=>pr.merged_at && pr.base.ref===base && pr.merge_commit_sha===context.sha);
+            if(!merged) throw Error('Default-branch commit is not a merged pull request');
+            core.setOutput('sha',context.sha); core.setOutput('run_id',String(context.runId)); core.setOutput('pr',String(merged.number));
+  quality:
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - run: python -m pip install uv==0.11.15
+      - run: uv sync --frozen --extra service --extra classical --extra cli
+      - run: uv run --no-sync ruff check src tests migrations scripts
+      - run: uv run --no-sync ruff format --check src tests migrations scripts
+      - run: uv run --no-sync mypy src
+      - run: uv run --no-sync pytest --junitxml=results/junit.xml --cov=quantum_route_core --cov-report=xml:results/coverage.xml
+      - run: uv build
+      - name: Verify minimal wheel installation
+        shell: bash
+        run: |
+          uv venv .core-test
+          if [ "$RUNNER_OS" = "Windows" ]; then PY=.core-test/Scripts/python.exe; else PY=.core-test/bin/python; fi
+          uv pip install --python "$PY" dist/*.whl
+          "$PY" -c "from quantum_route_core.public import solve; import importlib.util; assert importlib.util.find_spec('fastapi') is None; assert importlib.util.find_spec('ortools') is None"
+          "$PY" examples/python/solve_instance.py
+  build:
+    needs: [verify, quality]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+      - name: Build and smoke-test release image
+        env:
+          QROUTE_IMAGE: quantum-route-core:tested
+        run: |
+          docker build -f deploy/Dockerfile -t quantum-route-core:tested .
+          cp .env.example .env
+          TOKEN=$(openssl rand -hex 24)
+          echo "::add-mask::$TOKEN"
+          echo "QROUTE_AUTH_TOKENS={\"ci\":\"$TOKEN\"}" >> .env
+          echo "QROUTE_SMOKE_TOKEN=$TOKEN" >> .env
+          docker compose -f deploy/compose.yaml up -d --wait api worker
+          docker compose -f deploy/compose.yaml exec -T api python scripts/smoke.py
+      - name: Save immutable release input
+        env:
+          SHA: ${{ needs.verify.outputs.sha }}
+        run: |
+          mkdir -p release
+          docker save quantum-route-core:tested -o release/image.tar
+          printf '%s' "$SHA" > release/commit.txt
+          tar -czf release/deploy-bundle.tar.gz deploy scripts examples alembic.ini migrations
+          cd release
+          sha256sum image.tar deploy-bundle.tar.gz > checksums.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-${{ needs.verify.outputs.sha }}
+          path: release/
+          retention-days: 14
+      - name: Cleanup
+        if: always()
+        run: docker compose -f deploy/compose.yaml down
+  publish:
+    needs: [verify, quality, build]
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      actions: read
+      packages: write
+    outputs:
+      image: ${{ steps.publish.outputs.image }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: release-${{ needs.verify.outputs.sha }}
+          run-id: ${{ needs.verify.outputs.run_id }}
+          github-token: ${{ github.token }}
+          path: release
+      - id: publish
+        env:
+          SHA: ${{ needs.verify.outputs.sha }}
+          TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          cd release
+          test "$(cat commit.txt)" = "$SHA"
+          sha256sum --check checksums.txt
+          docker load -i image.tar
+          IMAGE="ghcr.io/${REPO,,}:$SHA"
+          echo "$TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+          docker tag quantum-route-core:tested "$IMAGE"
+          docker push "$IMAGE"
+          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE")
+          echo "image=$DIGEST" >> "$GITHUB_OUTPUT"
+  deploy:
+    needs: [verify, publish]
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Reject an obsolete deployment after approval
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        env:
+          EXPECTED_SHA: ${{ needs.verify.outputs.sha }}
+        with:
+          script: |
+            const {owner,repo}=context.repo;
+            const repository=(await github.rest.repos.get({owner,repo})).data;
+            const branch=(await github.rest.repos.getBranch({owner,repo,branch:repository.default_branch})).data;
+            if(branch.commit.sha!==process.env.EXPECTED_SHA) throw Error('Default branch advanced while deployment waited');
+            const associated=(await github.rest.repos.listPullRequestsAssociatedWithCommit({owner,repo,commit_sha:process.env.EXPECTED_SHA})).data;
+            if(!associated.some(pr=>pr.merged_at && pr.base.ref===repository.default_branch && pr.merge_commit_sha===process.env.EXPECTED_SHA)) throw Error('Commit is no longer associated with a merged pull request');
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: release-${{ needs.verify.outputs.sha }}
+          run-id: ${{ needs.verify.outputs.run_id }}
+          github-token: ${{ github.token }}
+          path: release
+      - name: Deploy verified bundle over pinned SSH connection
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          HOST: ${{ vars.DEPLOY_HOST }}
+          USER: ${{ vars.DEPLOY_USER }}
+          IMAGE: ${{ needs.publish.outputs.image }}
+          SHA: ${{ needs.verify.outputs.sha }}
+        run: |
+          [[ "$HOST" =~ ^[a-zA-Z0-9.-]+$ ]] && [[ "$USER" =~ ^[a-zA-Z0-9_-]+$ ]]
+          [[ "$SHA" =~ ^[a-f0-9]{40}$ ]] && [[ "$IMAGE" =~ ^ghcr.io/[a-z0-9/._-]+@sha256:[a-f0-9]{64}$ ]]
+          cd release && sha256sum --check checksums.txt && cd ..
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
+          scp -o StrictHostKeyChecking=yes release/deploy-bundle.tar.gz "$USER@$HOST:/opt/quantum-route-core/incoming/$SHA.tar.gz"
+          ssh -o StrictHostKeyChecking=yes "$USER@$HOST" "mkdir -p /opt/quantum-route-core/releases/$SHA && tar -xzf /opt/quantum-route-core/incoming/$SHA.tar.gz -C /opt/quantum-route-core/releases/$SHA && bash /opt/quantum-route-core/releases/$SHA/scripts/deploy-host.sh '$IMAGE' '$SHA'"
+      - name: Release summary
+        env:
+          SHA: ${{ needs.verify.outputs.sha }}
+          IMAGE: ${{ needs.publish.outputs.image }}
+        run: printf 'Deployed %s\nImage %s\n' "$SHA" "$IMAGE" >> "$GITHUB_STEP_SUMMARY"

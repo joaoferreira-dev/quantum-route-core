@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Quantum Route Core — rotas por veículo</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <style>
+    *{box-sizing:border-box}body{margin:0;font:16px system-ui;background:#f3f5f8;color:#17243b}
+    header{padding:20px 24px;background:#17243b;color:white}h1{font-size:22px;margin:0 0 8px}
+    main{display:grid;grid-template-columns:320px 1fr;min-height:80vh}aside{padding:20px;overflow-wrap:anywhere}
+    #map{min-height:75vh}label{display:block;margin:16px 0 8px}input{max-width:100%}
+    .route{border-left:5px solid var(--color);padding:12px;margin-top:12px;background:white}
+    button{padding:8px 12px;cursor:pointer}.stop{border-radius:50%;background:#17243b;color:white;text-align:center;font-weight:bold}
+    #status{padding:12px;background:#fff2cf;margin:12px 0}.muted{font-size:14px;color:#526078}
+    @media(max-width:700px){main{grid-template-columns:1fr}#map{min-height:60vh}}
+  </style>
+</head>
+<body>
+<header><h1>Quantum Route Core</h1>Planejamento de entregas · São Paulo</header>
+<main><aside>
+  <label for="file">Carregar resultado JSON</label><input type="file" id="file" accept=".json,application/json">
+  <div id="status" role="status" aria-live="polite">Nenhum planejamento carregado.</div>
+  <p class="muted">Exibe somente geometrias devolvidas pelo provedor. Não desenha caminhos em linha reta nem faz novas consultas de rotas.</p>
+  <div id="routes"></div>
+  <p class="muted">O mapa-base é carregado da rede. Seu resultado é lido localmente, sem upload. © openrouteservice.org · © OpenStreetMap contributors.</p>
+</aside><div id="map" aria-label="Mapa de rotas por veículo"></div></main>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const map=L.map('map').setView([-23.5505,-46.6333],12);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'}).addTo(map);
+const layers=L.featureGroup().addTo(map), palette=['#1368ce','#ca3b36','#178653','#8051ba','#9a6505'];
+const status=document.getElementById('status'), list=document.getElementById('routes');
+document.getElementById('file').addEventListener('change',async event=>{
+  try{
+    const file=event.target.files[0]; if(!file)return;
+    if(file.size>5000000)throw Error('Arquivo excede 5 MB.');
+    const raw=JSON.parse(await file.text()), result=raw.planning_result||raw;
+    if(!Array.isArray(result.vehicle_routes))throw Error('Selecione um DeliveryPlanningResult ou resposta de job.');
+    layers.clearLayers();list.replaceChildren();
+    status.textContent='Estado: '+(raw.planning_status||result.planning_status)+' · '+result.vehicle_routes.length+' rotas';
+    const locations=new Map((result.locations||[]).map(x=>[x.id,x]));
+    result.vehicle_routes.forEach((r,i)=>{
+      const color=palette[i%palette.length], card=document.createElement('section');card.className='route';card.style.setProperty('--color',color);
+      const title=document.createElement('strong');title.textContent='Veículo '+r.vehicle_id;card.append(title);
+      const description=document.createElement('p');description.textContent=r.ordered_stop_ids.join(' → ');card.append(description);
+      const metrics=document.createElement('p');metrics.textContent='Carga: '+r.load+' · '+(r.distance_meters==null?'Distância indisponível':(r.distance_meters/1000).toFixed(1)+' km')+' · '+(r.travel_duration_seconds==null?'Duração indisponível':Math.round(r.travel_duration_seconds/60)+' min');card.append(metrics);
+      if(r.geometry&&r.geometry_status==='ready'){
+        const route=L.geoJSON(r.geometry,{style:{color,weight:5}}).addTo(layers);
+        const button=document.createElement('button');button.textContent='Ver rota';button.onclick=()=>map.fitBounds(route.getBounds(),{padding:[25,25]});card.append(button);
+      }else{const warning=document.createElement('p');warning.textContent='Traçado ainda indisponível.';card.append(warning);}
+      r.ordered_stop_ids.slice(0,-1).forEach((id,position)=>{
+        const location=locations.get(id);if(!location)return;const xy=location.snapped_location||location.requested_location;
+        const popup=document.createElement('span');popup.textContent=r.vehicle_id+' · '+(position===0?'Depósito':position+'ª parada')+' · '+id;
+        L.marker([xy[1],xy[0]],{icon:L.divIcon({className:'stop',html:position===0?'D':String(position),iconSize:[24,24]})}).bindPopup(popup).addTo(layers);
+      });list.append(card);
+    });
+    const unused=document.createElement('p');unused.textContent='Veículos ociosos: '+((result.unused_vehicle_ids||[]).join(', ')||'nenhum');list.append(unused);
+    for(const error of result.errors||[]){const line=document.createElement('p');line.textContent=error.code+': '+error.message;list.append(line);}
+    if(layers.getLayers().length)map.fitBounds(layers.getBounds(),{padding:[25,25]});
+  }catch(error){status.textContent='Não foi possível carregar: '+error.message;}
+});
+</script></body></html>

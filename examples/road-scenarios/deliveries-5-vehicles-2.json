@@ -1,0 +1,54 @@
+{
+  "mode": "road",
+  "depot": {
+    "id": "depot",
+    "latitude": -23.5505,
+    "longitude": -46.6333
+  },
+  "deliveries": [
+    {
+      "id": "point-01",
+      "latitude": -23.5614,
+      "longitude": -46.6559,
+      "demand": 1
+    },
+    {
+      "id": "point-02",
+      "latitude": -23.5874,
+      "longitude": -46.6576,
+      "demand": 1
+    },
+    {
+      "id": "point-03",
+      "latitude": -23.566,
+      "longitude": -46.693,
+      "demand": 1
+    },
+    {
+      "id": "point-04",
+      "latitude": -23.529,
+      "longitude": -46.669,
+      "demand": 1
+    },
+    {
+      "id": "point-05",
+      "latitude": -23.508,
+      "longitude": -46.624,
+      "demand": 1
+    }
+  ],
+  "vehicles": [
+    {
+      "id": "vehicle-1",
+      "capacity": 3
+    },
+    {
+      "id": "vehicle-2",
+      "capacity": 4
+    }
+  ],
+  "config": {
+    "backend": "classical",
+    "time_limit_seconds": 5
+  }
+}

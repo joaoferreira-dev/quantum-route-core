@@ -1,0 +1,55 @@
+# Local Python environments and package/build output
+.venv/
+venv/
+ENV/
+.core-test/
+.uv-cache/
+__pypackages__/
+build/
+dist/
+*.egg-info/
+*.whl
+
+# Python bytecode, test and analysis caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+pytest-cache-files-*/
+.hypothesis/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Runtime state, test results, and generated release bundles
+var/
+results/
+release/
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+*.log
+*.tar
+*.tar.gz
+
+# Editor and operating-system files
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
+*.bak
+*~

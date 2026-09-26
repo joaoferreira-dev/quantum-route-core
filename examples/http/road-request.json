@@ -1,0 +1,13 @@
+{
+  "mode": "road",
+  "depot": {"id": "deposito", "latitude": -23.5505, "longitude": -46.6333},
+  "deliveries": [
+    {"id": "paulista", "latitude": -23.5614, "longitude": -46.6559, "demand": 6},
+    {"id": "ibirapuera", "latitude": -23.5874, "longitude": -46.6576, "demand": 3},
+    {"id": "pinheiros", "latitude": -23.5672, "longitude": -46.6935, "demand": 4}
+  ],
+  "vehicles": [{"id": "van", "capacity": 10}, {"id": "pequeno", "capacity": 3}],
+  "routing": {"profile": "driving-car", "objective_metric": "travel_time", "max_snap_distance_meters": 100},
+  "config": {"backend": "classical", "time_limit_seconds": 5},
+  "planning_time_limit_seconds": 60
+}
