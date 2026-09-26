@@ -125,6 +125,10 @@ docker compose -f deploy/compose.yaml up --build -d
 
 Procedimentos de configuração, limites por integrador, backup e recuperação: [deployment.md](docs/deployment.md). Faça push de alterações somente em branches `feat/<nome>` ou `fix/<nome>` e use PR para `main`; o merge validado executa CI e pode iniciar deploy, que fica desabilitado até configurar `DEPLOY_ENABLED=true` e os requisitos de infraestrutura.
 
+## Contribuir e licença
+
+Leia [CONTRIBUTING.md](CONTRIBUTING.md) para preparar o ambiente e enviar alterações. O código deste projeto é distribuído sob a licença [MIT](LICENSE); dados, serviços e dependências de terceiros continuam sujeitos às próprias licenças e condições.
+
 ```powershell
 uv run ruff check src tests migrations scripts
 uv run ruff format --check src tests migrations scripts
@@ -155,4 +159,4 @@ docs/                Integração, operação e status
 specs/               Especificação acordada
 ```
 
-Dados geográficos: IBGE, openrouteservice e colaboradores do OpenStreetMap, conforme cada artefato. A revisão de licenças e condições de distribuição permanece requisito anterior à publicação.
+Dados geográficos: IBGE, openrouteservice e colaboradores do OpenStreetMap, conforme cada artefato. Confira as licenças e condições de distribuição próprias de cada dado, serviço e dependência de terceiros.
