@@ -1,7 +1,7 @@
 import math
 import time
 
-from quantum_route_core.application import solve
+from quantum_route_core.application import preflight, solve
 from quantum_route_core.domain import PlanningResult, ProblemInstance, RoadRequest
 from quantum_route_core.errors import RouteError
 from quantum_route_core.execution import ExecutionContext
@@ -22,11 +22,14 @@ def plan_deliveries(
     try:
         from quantum_route_core.routing.area import validate_area
 
-        if (
-            len(request.deliveries) > request.config.max_deliveries
-            or len(request.vehicles) > request.config.max_vehicles
-        ):
-            raise RouteError("resource_limit", "Too many deliveries or vehicles")
+        preflight(
+            ProblemInstance(
+                depot=request.depot,
+                customers=request.deliveries,
+                vehicles=request.vehicles,
+            ),
+            request.config,
+        )
         validate_area(request, area_path)
         points = [request.depot, *request.deliveries]
         coordinates = [[p.longitude, p.latitude] for p in points]
