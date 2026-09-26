@@ -32,7 +32,7 @@ def worker_lock(path: Path):
             if os.name == "nt":
                 import msvcrt
 
-                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
             else:
                 import fcntl
 
@@ -256,7 +256,7 @@ def main():
 
     signal.signal(signal.SIGTERM, interrupt)
     if os.name == "nt":
-        signal.signal(signal.SIGBREAK, interrupt)
+        signal.signal(signal.SIGBREAK, interrupt)  # type: ignore[attr-defined]
     try:
         with worker_lock(settings.database_path.with_suffix(".worker.lock")):
             repo.recover(settings.retention_seconds)

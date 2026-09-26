@@ -19,7 +19,12 @@ def stop_processes(processes: list[subprocess.Popen]) -> None:
             continue
         try:
             descendants.extend(psutil.Process(process.pid).children(recursive=True))
-            process.send_signal(signal.CTRL_BREAK_EVENT if os.name == "nt" else signal.SIGINT)
+            stop_signal = (
+                signal.CTRL_BREAK_EVENT  # type: ignore[attr-defined]
+                if os.name == "nt"
+                else signal.SIGINT
+            )
+            process.send_signal(stop_signal)
         except (OSError, psutil.Error):
             pass
     deadline = time.monotonic() + 5
@@ -72,7 +77,7 @@ def main() -> None:
 
     processes: list[subprocess.Popen] = []
     options = (
-        {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+        {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}  # type: ignore[attr-defined]
         if os.name == "nt"
         else {"start_new_session": True}
     )
