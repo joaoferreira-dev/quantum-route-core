@@ -1,0 +1,14 @@
+.git
+.venv
+.env
+.env.*
+!.env.example
+var
+results
+.uv-cache
+.pytest_cache
+.mypy_cache
+.ruff_cache
+pytest-cache-files-*
+dist
+*.tar

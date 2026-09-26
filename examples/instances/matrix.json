@@ -1,0 +1,8 @@
+{
+  "depot": {"id": "deposito"},
+  "customers": [{"id": "A", "demand": 6}, {"id": "B", "demand": 4}, {"id": "C", "demand": 3}],
+  "vehicles": [{"id": "van", "capacity": 10}, {"id": "pequeno", "capacity": 3}],
+  "node_order": ["deposito", "A", "B", "C"],
+  "cost_matrix": [[0, 2, 8, 4], [7, 0, 2, 9], [3, 4, 0, 5], [1, 6, 8, 0]],
+  "cost_units": "synthetic_units"
+}

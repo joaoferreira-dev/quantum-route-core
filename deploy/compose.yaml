@@ -1,0 +1,42 @@
+name: quantum-route-core
+x-common: &common
+  image: ${QROUTE_IMAGE:-quantum-route-core:local}
+  build:
+    context: ..
+    dockerfile: deploy/Dockerfile
+  env_file: ../.env
+  environment:
+    QROUTE_DATABASE_URL: sqlite:////app/var/jobs.db
+    QROUTE_ORS_LEDGER_PATH: /app/var/ors.sqlite
+    QROUTE_NETWORK_MODE: "true"
+    QROUTE_ADMISSION_ENABLED: ${QROUTE_ADMISSION_ENABLED:-true}
+  volumes:
+    - qroute-data:/app/var
+  init: true
+services:
+  migrate:
+    <<: *common
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+  api:
+    <<: *common
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:8000:8000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  worker:
+    <<: *common
+    command: ["python", "-m", "quantum_route_core.jobs.worker"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+volumes:
+  qroute-data:

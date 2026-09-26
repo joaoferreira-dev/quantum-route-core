@@ -1,0 +1,118 @@
+name: Deploy production
+on:
+  workflow_run:
+    workflows: [Build and test]
+    types: [completed]
+    branches: [main]
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+concurrency:
+  group: production
+  cancel-in-progress: false
+jobs:
+  verify:
+    if: vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.verify.outputs.sha }}
+      run_id: ${{ steps.verify.outputs.run_id }}
+    steps:
+      - uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        id: verify
+        with:
+          script: |
+            const {owner,repo}=context.repo;
+            const repository=(await github.rest.repos.get({owner,repo})).data;
+            const base=repository.default_branch;
+            const run=context.payload.workflow_run;
+            if(base!=='main' || run.event!=='push' || run.conclusion!=='success' || run.head_repository?.full_name!==`${owner}/${repo}` || run.head_branch!==base) throw Error('Untrusted or unsuccessful build origin');
+            const head=(await github.rest.repos.getBranch({owner,repo,branch:base})).data.commit.sha;
+            if(run.head_sha!==head) throw Error('Obsolete build; default branch advanced');
+            const associated=(await github.rest.repos.listPullRequestsAssociatedWithCommit({owner,repo,commit_sha:run.head_sha})).data;
+            const merged=associated.find(pr=>pr.merged_at && pr.base.ref===base && pr.merge_commit_sha===run.head_sha);
+            if(!merged) throw Error('Default-branch commit is not a merged pull request');
+            const workflow=(await github.rest.actions.getWorkflow({owner,repo,workflow_id:run.workflow_id})).data;
+            if(workflow.path!=='.github/workflows/build-and-test.yml') throw Error('Wrong workflow');
+            core.setOutput('sha',run.head_sha); core.setOutput('run_id',String(run.id)); core.setOutput('pr',String(merged.number));
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      actions: read
+      packages: write
+    outputs:
+      image: ${{ steps.publish.outputs.image }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: release-${{ needs.verify.outputs.sha }}
+          run-id: ${{ needs.verify.outputs.run_id }}
+          github-token: ${{ github.token }}
+          path: release
+      - id: publish
+        env:
+          SHA: ${{ needs.verify.outputs.sha }}
+          TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          cd release
+          test "$(cat commit.txt)" = "$SHA"
+          sha256sum --check checksums.txt
+          docker load -i image.tar
+          IMAGE="ghcr.io/${REPO,,}:$SHA"
+          echo "$TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+          docker tag quantum-route-core:tested "$IMAGE"
+          docker push "$IMAGE"
+          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE")
+          echo "image=$DIGEST" >> "$GITHUB_OUTPUT"
+  deploy:
+    needs: [verify, publish]
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Reject an obsolete deployment after approval
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        env:
+          EXPECTED_SHA: ${{ needs.verify.outputs.sha }}
+        with:
+          script: |
+            const {owner,repo}=context.repo;
+            const repository=(await github.rest.repos.get({owner,repo})).data;
+            const branch=(await github.rest.repos.getBranch({owner,repo,branch:repository.default_branch})).data;
+            if(branch.commit.sha!==process.env.EXPECTED_SHA) throw Error('Default branch advanced while deployment waited');
+            const associated=(await github.rest.repos.listPullRequestsAssociatedWithCommit({owner,repo,commit_sha:process.env.EXPECTED_SHA})).data;
+            if(!associated.some(pr=>pr.merged_at && pr.base.ref===repository.default_branch && pr.merge_commit_sha===process.env.EXPECTED_SHA)) throw Error('Commit is no longer associated with a merged pull request');
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: release-${{ needs.verify.outputs.sha }}
+          run-id: ${{ needs.verify.outputs.run_id }}
+          github-token: ${{ github.token }}
+          path: release
+      - name: Deploy verified bundle over pinned SSH connection
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          HOST: ${{ vars.DEPLOY_HOST }}
+          USER: ${{ vars.DEPLOY_USER }}
+          IMAGE: ${{ needs.publish.outputs.image }}
+          SHA: ${{ needs.verify.outputs.sha }}
+        run: |
+          [[ "$HOST" =~ ^[a-zA-Z0-9.-]+$ ]] && [[ "$USER" =~ ^[a-zA-Z0-9_-]+$ ]]
+          [[ "$SHA" =~ ^[a-f0-9]{40}$ ]] && [[ "$IMAGE" =~ ^ghcr.io/[a-z0-9/._-]+@sha256:[a-f0-9]{64}$ ]]
+          cd release && sha256sum --check checksums.txt && cd ..
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
+          scp -o StrictHostKeyChecking=yes release/deploy-bundle.tar.gz "$USER@$HOST:/opt/quantum-route-core/incoming/$SHA.tar.gz"
+          ssh -o StrictHostKeyChecking=yes "$USER@$HOST" "mkdir -p /opt/quantum-route-core/releases/$SHA && tar -xzf /opt/quantum-route-core/incoming/$SHA.tar.gz -C /opt/quantum-route-core/releases/$SHA && bash /opt/quantum-route-core/releases/$SHA/scripts/deploy-host.sh '$IMAGE' '$SHA'"
+      - name: Release summary
+        env:
+          SHA: ${{ needs.verify.outputs.sha }}
+          IMAGE: ${{ needs.publish.outputs.image }}
+        run: printf 'Deployed %s\nImage %s\n' "$SHA" "$IMAGE" >> "$GITHUB_STEP_SUMMARY"
