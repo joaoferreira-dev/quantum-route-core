@@ -1,8 +1,6 @@
 name: Deploy production
 on:
-  workflow_run:
-    workflows: [Build and test]
-    types: [completed]
+  push:
     branches: [main]
 permissions:
   contents: read
@@ -26,18 +24,52 @@ jobs:
             const {owner,repo}=context.repo;
             const repository=(await github.rest.repos.get({owner,repo})).data;
             const base=repository.default_branch;
-            const run=context.payload.workflow_run;
-            if(base!=='main' || run.event!=='push' || run.conclusion!=='success' || run.head_repository?.full_name!==`${owner}/${repo}` || run.head_branch!==base) throw Error('Untrusted or unsuccessful build origin');
+            if(base!=='main' || context.ref!=='refs/heads/main') throw Error('Untrusted deployment origin');
             const head=(await github.rest.repos.getBranch({owner,repo,branch:base})).data.commit.sha;
-            if(run.head_sha!==head) throw Error('Obsolete build; default branch advanced');
-            const associated=(await github.rest.repos.listPullRequestsAssociatedWithCommit({owner,repo,commit_sha:run.head_sha})).data;
-            const merged=associated.find(pr=>pr.merged_at && pr.base.ref===base && pr.merge_commit_sha===run.head_sha);
+            if(context.sha!==head) throw Error('Obsolete deployment; default branch advanced');
+            const associated=(await github.rest.repos.listPullRequestsAssociatedWithCommit({owner,repo,commit_sha:context.sha})).data;
+            const merged=associated.find(pr=>pr.merged_at && pr.base.ref===base && pr.merge_commit_sha===context.sha);
             if(!merged) throw Error('Default-branch commit is not a merged pull request');
-            const workflow=(await github.rest.actions.getWorkflow({owner,repo,workflow_id:run.workflow_id})).data;
-            if(workflow.path!=='.github/workflows/build-and-test.yml') throw Error('Wrong workflow');
-            core.setOutput('sha',run.head_sha); core.setOutput('run_id',String(run.id)); core.setOutput('pr',String(merged.number));
-  publish:
+            core.setOutput('sha',context.sha); core.setOutput('run_id',String(context.runId)); core.setOutput('pr',String(merged.number));
+  build:
     needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+      - name: Build and smoke-test release image
+        env:
+          QROUTE_IMAGE: quantum-route-core:tested
+        run: |
+          docker build -f deploy/Dockerfile -t quantum-route-core:tested .
+          cp .env.example .env
+          TOKEN=$(openssl rand -hex 24)
+          echo "::add-mask::$TOKEN"
+          echo "QROUTE_AUTH_TOKENS={\"ci\":\"$TOKEN\"}" >> .env
+          echo "QROUTE_SMOKE_TOKEN=$TOKEN" >> .env
+          docker compose -f deploy/compose.yaml up -d --wait api worker
+          docker compose -f deploy/compose.yaml exec -T api python scripts/smoke.py
+      - name: Save immutable release input
+        env:
+          SHA: ${{ needs.verify.outputs.sha }}
+        run: |
+          mkdir -p release
+          docker save quantum-route-core:tested -o release/image.tar
+          printf '%s' "$SHA" > release/commit.txt
+          tar -czf release/deploy-bundle.tar.gz deploy scripts examples alembic.ini migrations
+          cd release
+          sha256sum image.tar deploy-bundle.tar.gz > checksums.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-${{ needs.verify.outputs.sha }}
+          path: release/
+          retention-days: 14
+      - name: Cleanup
+        if: always()
+        run: docker compose -f deploy/compose.yaml down
+  publish:
+    needs: [verify, build]
     runs-on: ubuntu-latest
     environment: production
     permissions:

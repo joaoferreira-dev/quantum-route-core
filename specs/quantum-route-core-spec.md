@@ -469,7 +469,7 @@ Na CI de PR, testes viários usam respostas gravadas/fixtures licenciadas e não
 
 #### 8.4.1 `build-and-test.yml`
 
-- Gatilhos: `push` em branches de trabalho e na branch padrão, `pull_request` direcionado à branch padrão e `workflow_dispatch`. Adicionar `merge_group` se uma merge queue for habilitada.
+- Gatilho: somente `push` em branches de trabalho. Não configurar eventos `pull_request` ou `workflow_run`; deploy é acionado pelo push resultante do merge na branch padrão. Adicionar `merge_group` somente se a política de CI for alterada para suportar merge queues.
 - Instalar a versão Python suportada e dependências via uv com lockfile congelado. Executar Ruff, mypy, pytest, testes de contrato/API, persistência, cancelamento e instalação dos extras conforme a matriz da seção 8.3.
 - Construir wheel e sdist; verificar instalação do wheel em ambiente limpo. Construir a imagem Docker do perfil clássico/API e executar smoke test com API, worker e uma instância sintética. Smoke tests quânticos usam fixtures pequenas e orçamento limitado.
 - Guardar relatórios e artefatos de build identificados pelo SHA testado. Uma falha de lint, tipos, testes ou build impede a etapa de criação de PR e torna o check obrigatório malsucedido.
@@ -481,10 +481,10 @@ Na CI de PR, testes viários usam respostas gravadas/fixtures licenciadas e não
 
 #### 8.4.2 `deploy.yml`
 
-- Gatilho automático: `workflow_run` após conclusão bem-sucedida de `build-and-test.yml` originada por `push` na branch padrão do próprio repositório. PRs, forks e branches de trabalho nunca iniciam deploy de produção.
+- Gatilho automático: `push` na branch padrão. Validar que o commit é um merge de PR antes do build de release ou de consumir artefatos com privilégios de produção. PRs, forks e branches de trabalho nunca iniciam deploy de produção.
 - Permitir `workflow_dispatch` para publicar novamente um SHA aprovado ou executar rollback. Verificar que o SHA pertence ao histórico da branch padrão e possui execução bem-sucedida dos checks exigidos; uma entrada manual não dispensa validação.
 - Vincular o workflow ao GitHub Environment `production`, com credenciais próprias e regras de branches/proteção configuradas no repositório. Serializar implantações com grupo de concorrência de produção e `cancel-in-progress: false`, evitando interromper migrações.
-- Identificar a release pelo SHA aprovado e pelo digest imutável da imagem. Recuperar artefato da execução validada, verificar origem e SHA e publicar a imagem no GitHub Container Registry (GHCR). Implantar por digest, sem reconstruir uma versão diferente nem usar `latest` como identidade da release. No rollback, reutilizar o digest previamente publicado.
+- Identificar a release pelo SHA aprovado e pelo digest imutável da imagem. Construir e smoke-testar o artefato para o SHA validado, verificar origem e SHA e publicar a imagem no GitHub Container Registry (GHCR). Implantar por digest e não usar `latest` como identidade da release. No rollback, reutilizar o digest previamente publicado.
 - Para deploy automático, confirmar antes da implantação que o SHA ainda corresponde à versão mais recente elegível da branch padrão; ignorar execução obsoleta. Rollback manual registra explicitamente que a versão escolhida é anterior.
 - Destino inicial: host único executando Docker Compose, com volume persistente local para SQLite. Provedor, host e mecanismo de acesso serão definidos antes de habilitar o workflow; não presumir credenciais ou infraestrutura existentes.
 - Sequência: verificar configuração e espaço disponível; interromper admissão e drenar jobs ativos até um prazo documentado; encerrar de forma controlada os restantes preservando incumbentes; parar API/worker; criar backup consistente do SQLite; aplicar migrações Alembic uma única vez; iniciar API e worker com a mesma imagem aprovada.

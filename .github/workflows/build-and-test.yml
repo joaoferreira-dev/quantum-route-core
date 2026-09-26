@@ -4,10 +4,6 @@ on:
     branches:
       - "feat/**"
       - "fix/**"
-      # main is updated by an approved PR merge, which creates the tested deploy artifact.
-      - main
-  pull_request:
-    branches: [main]
 permissions:
   contents: read
 concurrency:
